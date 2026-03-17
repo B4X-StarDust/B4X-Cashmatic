@@ -1,0 +1,170 @@
+﻿AppType=JavaFX
+Build1=Default,b4j.example
+File1=Layout1.bjl
+FileGroup1=Default Group
+Group=Default Group
+Library1=jcore
+Library2=jfx
+Library3=jokhttputils2
+Library4=json
+Library5=jxui
+Library6=javaobject
+NumberOfFiles=1
+NumberOfLibraries=6
+NumberOfModules=0
+Version=10.5
+@EndOfDesignText@
+#Region Project Attributes 
+	#MainFormWidth: 600
+	#MainFormHeight: 600 
+#End Region
+
+Sub Process_Globals
+	Private fx As JFX
+	Private MainForm As Form
+	Private xui As XUI 
+	
+	Private ListView1 As ListView
+	
+	Private apiUrl As String
+	Private bearerToken As String
+	Dim ip As String = "192.168.1.150"
+End Sub
+
+Sub AppStart (Form1 As Form, Args() As String)
+	MainForm = Form1
+	MainForm.RootPane.LoadLayout("Layout1")
+	MainForm.Show
+	
+	ListView1.Items.AddAll(Regex.Split(",","1=Login,2=Payment,3=Cancel,4=StartRefill,5=StopRefill,6=Active,7=Quit"))
+End Sub
+
+Private Sub ButtonCambioIP_Click
+	ip = inputbox("IP ADDRESS (Empty if using Simulator):", "IP", ip)
+	If ip <> "" Then apiUrl = "https://" & ip & ":50301/api"
+	Log("IP ADDRESS SET: " & apiUrl)
+End Sub
+
+Private Sub ListView1_SelectedIndexChanged(Index As Int)
+	Dim cmd As String = (Index+1)
+	Select cmd
+		Case "1"
+			Dim username As String = inputbox("USERNAME:", "Login", "")
+			Dim password As String = inputbox("PASSWORD:", "Login", "")
+			If username <>"" And password<>"" Then Login(username, password)
+		Case "2"
+			Dim amount As Int = 0
+			Do While amount <= 0
+				amount = inputbox("AMOUNT IN CENTS:", "Payment", "0")
+			Loop
+			Payment(amount)
+		Case "3"
+			CancelPayment
+		Case "4"
+			StartRefill
+		Case "5"
+			StopRefill
+		Case "6"
+			ActiveTransaction
+		Case "7"
+			Log("Exit")
+			ExitApplication
+		Case Else
+			Log("ERROR: Command not found")
+	End Select
+End Sub
+
+'<code>WAIT FOR (SendCommand("/user/",json.ToString) COMPLETE (response As String)</code>
+Sub SendCommand(command_url As String, content As String) As ResumableSub
+    Dim job As HttpJob
+    job.Initialize("job", Me)
+    
+    job.PostString(apiUrl & command_url, content)
+    job.GetRequest.SetContentType("application/json")
+    
+    If command_url <> "/user/Login" Then
+        job.GetRequest.SetHeader("Authorization", "Bearer " & bearerToken)
+    End If
+    
+    Wait For (job) JobDone(job As HttpJob)
+    
+    If job.Success Then
+        Log("RESPONSE: " & job.Response.StatusCode)
+        Dim res As String = job.GetString
+        Log(res)
+        job.Release
+        Return res
+    Else
+		Log("ERROR: " & job.ErrorMessage)
+        job.Release
+        Return ""
+    End If
+End Sub
+
+Sub Login(username As String, password As String)
+    Dim m As Map
+    m.Initialize
+    m.Put("username", username)
+    m.Put("password", password)
+    
+    Dim json As JSONGenerator
+    json.Initialize(m)
+    
+    'Dim response As String = SendCommand("/user/Login", json.ToString)
+	WAIT FOR (SendCommand("/user/Login",json.ToString)) COMPLETE (response As String)
+    
+    If response = "" Then
+		Log("ERROR: " & "Failed sending the request")
+        Return
+    End If
+    
+    Dim parser As JSONParser
+    parser.Initialize(response)
+    Dim root As Map = parser.NextObject
+    
+    Dim data As Map = root.Get("data")
+    bearerToken = data.Get("token")
+    
+    Log("- BEARER TOKEN SAVED")
+End Sub
+
+Sub Payment(amount As Int)
+    Dim m As Map
+    m.Initialize
+    m.Put("amount", amount)
+    
+    Dim json As JSONGenerator
+    json.Initialize(m)
+    
+    SendCommand("/transaction/StartPayment", json.ToString)
+End Sub
+
+Sub CancelPayment
+    SendCommand("/transaction/CancelPayment", "{}")
+End Sub
+
+Sub StartRefill
+    SendCommand("/transaction/StartRefill", "{}")
+End Sub
+
+Sub StopRefill
+    SendCommand("/transaction/StopRefill", "{}")
+End Sub
+
+Sub ActiveTransaction
+    SendCommand("/device/ActiveTransaction", "{}")
+End Sub
+
+Private Sub inputbox(Title As String,Message As String, InitialValue As String)
+	Dim jo As JavaObject
+	jo.InitializeNewInstance("javafx.scene.control.TextInputDialog", Null)
+	jo.RunMethodJO("setTitle", Array As String(Title))
+	jo.RunMethod("setHeaderText", Array As String(Message))
+	jo.RunMethodJO("getEditor", Null).RunMethod("setText", Array As String(InitialValue))
+
+	If jo.RunMethodjo("showAndWait", Null).RunMethod("isPresent", Null)=True Then
+		'ok button pressed
+		Dim txt As String=jo.RunMethodJO("getEditor", Null).RunMethod("getText", Null)
+		Log(txt)
+	End If
+End Sub
